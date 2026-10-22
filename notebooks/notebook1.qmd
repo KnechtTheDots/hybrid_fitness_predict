@@ -1,0 +1,7 @@
+---
+title: "notebook1"
+format: html
+---
+
+The purpose of this notebook is to document the development of the analysis. The final analysis will be run through a series of scripts, but I will develop those scripts interactively here and document my decision making process as I go. 
+
