@@ -5,3 +5,72 @@ format: html
 
 The purpose of this notebook is to document the development of the analysis. The final analysis will be run through a series of scripts, but I will develop those scripts interactively here and document my decision making process as I go. 
 
+```{r}
+# since this notebook is not in the main directory, use the here package
+# to get proper file paths
+library(here)
+
+library(ggplot2)
+library(tidyr)
+library(dplyr)
+library(ggbeeswarm)
+```
+
+## October 22, 2026
+
+Seeds were planted 20 at a time into grids of 4 rows by 5 columns. Before planting the seeds, they were placed onto a grid as they were to be planted and a photo taken with a scale in the photo. The areas of the seeds were then measured from the photograph. Four researchers were working on the project, to get used to using imageJ and make sure there was no bias, the seeds were measured by all four researchers.  
+
+First, I'm reading in the four files and just calculate the mean seed area for each seed.
+
+```{r}
+initials <- c("jk", "js", "lb", "rp")
+
+# there were some notes etc. beyond the 4th column, so only take the first 4 columns
+tmp <- read.csv(here(paste0("resources/seed_areas_", initials[1], ".csv")))[,1:4]
+
+tmp$researcher <- initials[1]
+
+d <- tmp
+
+for(i in 2:length(initials)){
+  tmp <- read.csv(here(paste0("resources/seed_areas_", initials[i], ".csv")))[,1:4]
+
+  tmp$researcher <- initials[i]
+  
+  d <- rbind(d, tmp)
+}
+
+
+# calculate the mean of the four measurements
+seed_size <- d %>% 
+  group_by(tray, block, ind) %>% 
+  summarise(seed_area = round(mean(area),3))
+
+```
+
+Next, I am going to attach the cross id and parentage to each individual.
+
+```{r}
+
+ids <- read.csv(here("resources/planting_ids.csv"))
+
+# tray format is different in the two files, so need to change that to merge
+ids <- ids %>% 
+  mutate(tray = gsub("LC", "lc_", tray)) %>% 
+  select(tray, block, cross, mother, father)
+
+seed_size %>% 
+  left_join(ids) %>% 
+  mutate(cross = tolower(cross),
+         cross = factor(cross, levels = c("cal", "bc_cal", "f1", "f2", "bc_lon", "lon"))) %>% 
+  #filter(cross %in% c("cal", "f1", "lon")) %>% 
+  #mutate(test = paste0(cross, mother)) %>% 
+  drop_na(seed_area) %>% 
+  ggplot(aes(x = mother, y = seed_area, fill = father)) +
+  geom_boxplot()
+
+```
+
+
+
+
