@@ -1,5 +1,5 @@
 rule target:
     input:
-        "notebooks/notebook1.html"
+        "notebooks/notebook1.pdf"
 
 include: "rules/render_notebook.smk"
