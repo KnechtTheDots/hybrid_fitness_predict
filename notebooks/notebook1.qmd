@@ -1,6 +1,6 @@
 ---
 title: "notebook1"
-format: html
+format: docx
 ---
 
 The purpose of this notebook is to document the development of the analysis. The final analysis will be run through a series of scripts, but I will develop those scripts interactively here and document my decision making process as I go. 
@@ -13,10 +13,8 @@ library(here)
 library(ggplot2)
 library(tidyr)
 library(dplyr)
-library(ggbeeswarm)
 ```
 
-## October 22, 2026
 
 Seeds were planted 20 at a time into grids of 4 rows by 5 columns. Before planting the seeds, they were placed onto a grid as they were to be planted and a photo taken with a scale in the photo. The areas of the seeds were then measured from the photograph. Four researchers were working on the project, to get used to using imageJ and make sure there was no bias, the seeds were measured by all four researchers.  
 
@@ -59,6 +57,10 @@ ids <- ids %>%
   mutate(tray = gsub("LC", "lc_", tray)) %>% 
   select(tray, block, cross, mother, father)
 
+```
+
+
+```{r}
 seed_size %>% 
   left_join(ids) %>% 
   mutate(cross = tolower(cross),
@@ -68,9 +70,6 @@ seed_size %>%
   drop_na(seed_area) %>% 
   ggplot(aes(x = mother, y = seed_area, fill = father)) +
   geom_boxplot()
-
 ```
-
-
 
 

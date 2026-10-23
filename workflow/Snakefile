@@ -1,3 +1,5 @@
 rule target:
     input:
-        
+        "notebooks/notebook1.docx"
+
+include: "rules/render_notebook.smk"
