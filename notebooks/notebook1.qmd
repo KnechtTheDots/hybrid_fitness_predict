@@ -201,12 +201,49 @@ Now I'm going to join the two data sets and select the earliest observation.
   drop_na(germ_day) %>% 
   group_by(tray, block, ind) %>% 
   filter(germ_day == min(germ_day)) %>% 
-  filter(!duplicated(tray, block, ind)))
+  filter(!duplicated(tray, block, ind)) %>% 
+  select(tray, block, ind, germ_day))
 ```
+
+# Exploratory analysis of germination timing
 
 Ok, now that we have some germ times, let's join it with the planting ids to get cross and parentage info and do some exploratory analysis.
 
-```{r}
+First, let's look at germination time vs cross.
 
+```{r}
+germ_day <- germ_day %>% 
+  left_join(ids, by = join_by(tray, block)) %>% 
+  mutate(cross = tolower(cross),
+         cross = factor(cross, 
+                        levels = c("cal", "bc_cal", "f1", 
+                                   "f2", "bc_lon", "lon")))
+
+germ_day %>% 
+  ggplot(aes(x = cross, y = germ_day)) +
+  geom_boxplot()
+```
+It looks like the back crosses and f2 take longer to germinate than the f1s and parentals. Let's look at it by seed parent.
+
+```{r}
+germ_day %>% 
+  ggplot(aes(x = mother, y = germ_day)) +
+  geom_boxplot()
+```
+
+Not sure what to think abut this, but let's look at it breaking out the individual crosses (i.e. include the father information)
+
+```{r}
+germ_day %>% 
+  ggplot(aes(x = mother, y = germ_day, fill = father)) +
+  geom_boxplot()
+```
+The f2 pattern looks really wierd so let's look at the distribution of germ days.
+
+```{r}
+germ_day %>% 
+  ggplot(aes(x = germ_day)) +
+  geom_histogram(binwidth = 2) +
+  facet_grid(mother ~ father)
 ```
 
