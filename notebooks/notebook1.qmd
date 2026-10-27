@@ -25,15 +25,18 @@ First, I'm reading in the four files and just calculate the mean seed area for e
 ```{r}
 initials <- c("jk", "js", "lb", "rp")
 
-# there were some notes etc. beyond the 4th column, so only take the first 4 columns
-tmp <- read.csv(here(paste0("data/raw/seed_areas_", initials[1], ".csv")))[,1:4]
+# there were some notes etc. beyond the 4th column, 
+# so only take the first 4 columns
+tmp <- read.csv(here(paste0("data/raw/seed_areas_", 
+                            initials[1], ".csv")))[,1:4]
 
 tmp$researcher <- initials[1]
 
 d <- tmp
 
 for(i in 2:length(initials)){
-  tmp <- read.csv(here(paste0("data/raw/seed_areas_", initials[i], ".csv")))[,1:4]
+  tmp <- read.csv(here(paste0("data/raw/seed_areas_", 
+                              initials[i], ".csv")))[,1:4]
 
   tmp$researcher <- initials[i]
   
@@ -74,7 +77,9 @@ First let's look at seed size vs cross type.
 ```{r}
 seed_size %>% 
   mutate(cross = tolower(cross),
-         cross = factor(cross, levels = c("cal", "bc_cal", "f1", "f2", "bc_lon", "lon"))) %>% 
+         cross = factor(cross, 
+                        levels = c("cal", "bc_cal", "f1", 
+                                   "f2", "bc_lon", "lon"))) %>% 
   drop_na(seed_area) %>% 
   ggplot(aes(x = cross, y = seed_area)) +
   geom_boxplot()
@@ -92,7 +97,9 @@ So it seems like there might be some real differences here. I'm not so sure that
 ```{r}
 seed_size %>% 
   mutate(cross = tolower(cross),
-         cross = factor(cross, levels = c("cal", "bc_cal", "f1", "f2", "bc_lon", "lon"))) %>%
+         cross = factor(cross, 
+                        levels = c("cal", "bc_cal", "f1", 
+                                   "f2", "bc_lon", "lon"))) %>%
   drop_na(seed_area) %>% 
   ggplot(aes(x = mother, y = seed_area)) +
   geom_boxplot()
@@ -110,7 +117,9 @@ It looks like there might be some real differences between the mothers. Most of 
 ```{r}
 seed_size %>% 
   mutate(cross = tolower(cross),
-         cross = factor(cross, levels = c("cal", "bc_cal", "f1", "f2", "bc_lon", "lon"))) %>%
+         cross = factor(cross, 
+                        levels = c("cal", "bc_cal", "f1", 
+                                   "f2", "bc_lon", "lon"))) %>%
   drop_na(seed_area) %>% 
   ggplot(aes(x = mother, y = seed_area, fill = father)) +
   geom_boxplot()
@@ -118,12 +127,86 @@ seed_size %>%
 
 It seems that making crosses between parents increases seed size within the same mother, i.e., f1 embryos produce bigger seeds. The F1 mother produces the same size seeds whether crossed with another f1, lon, or, cal.
 
-One last thing to do with seed size before moving on is that there is some missing data here. What happened is we tried to pre-apportion 20 seeds for each block ahead of time, but when we poured out the seeds or were arranging them to be photographed, we would sometimes loose a couple as they would jump around from static electricity or a misplaced sigh and then couldn't find them again. When that happened, we would leave the last places blank. So I just want to go through and figure out how many were missing from each block.
+One last thing to do with seed size before moving on is that there is some missing data here. What happened is we tried to pre-apportion 20 seeds for each block ahead of time, but when we poured out the seeds or were arranging them to be photographed, we would sometimes loose a couple as they would jump around from static electricity or a misplaced sigh and then couldn't find them again. When that happened, we would leave the last places blank. So I just want to go through and figure out how many were missing from each block. Just placing it here so If I need it for quick reference later I can come find it.
 
 ```{r}
 seed_size %>% 
   drop_na(seed_area) %>% 
   group_by(tray, block) %>% 
   summarise(n = n())
+```
+
+
+# Wrangling the germination timing data
+
+I think the next set of data that needs to be wrangled is germination timing. The file `data/raw/germination_timing.csv` has observations of germination. The column names here are tray, block, ind, which correspond with the seed areas above. The rest of the columns are days that I checked for germination with the format 24263_16 (R adds an X that I'll have to remove). Where 24263 means the Julian date 263 for year 2024 and the 16 indicates the time the observation was taken. I think the time is probably too fine grained for this analysis, so I am going to remove it as well. For efficiency's sake, I entered a 1 if the plant had germinated and didn't enter anything if it hadn't, so no germination at a time point will be an NA
+
+```{r}
+germ <- read.csv(here("data/raw/germination_timing.csv"))
+head(germ)
+```
+
+First thing is to make it a little more tidy.
+
+```{r}
+(germ <- germ %>% 
+  pivot_longer(4:ncol(germ), names_to = "date", values_to = "germ") %>% 
+  # get rid of X in front of date, separate and get rid of the time
+  # and make date numeric (also get rid of 24 since they are all
+  # 2024)
+  mutate(date = gsub("X24", "", date)) %>% 
+  separate(date, into = c("date", NA), sep = "_") %>% 
+  mutate(date = as.numeric(date)) %>% 
+  # now drop all the NAs when a germ wasn't observed and keep only the 
+  # earliest observed date, i.e., when it germinated
+  drop_na(germ) %>% 
+  group_by(tray, block, ind) %>% 
+  filter(date == min(date)))
+```
+
+There is one more source of germination timing in the form of the seedling areas. We measured the seedling areas through the time period that germination was being taken, so if there is a measurement for the seedling it must have germinated. I'll blend these together to make sure I didn't miss anything.
+
+```{r}
+areas <- read.csv(here("data/raw/seedling_areas.csv"))
+head(areas)
+```
+
+The time column here is when the seedling area was measured. Again, I'm going to drop the hours and get rid of the 24. It looks like area was read in as a character, so I'm going to force it into numeric then drop the NAs
+
+```{r}
+(areas <- areas %>% 
+  # remove the 24 and hours
+  separate(time, into = c("day", NA), sep = "_") %>% 
+  mutate(day = gsub("24","", day),
+         day = as.numeric(day)) %>% 
+  # make area numeric and drop NAs
+  mutate(area = as.numeric(area)) %>% 
+  drop_na(area) %>% 
+  # now get the earliest day for each individual
+  group_by(tray, block, ind) %>% 
+  filter(day == min(day)) %>% 
+  # since multiple researchers measured each day/seedling combo, there
+  # are multiple instances of each day, so filter down to just one
+  ungroup() %>% 
+  filter(!duplicated(paste0(tray, block, ind))))
+```
+
+Now I'm going to join the two data sets and select the earliest observation.
+
+```{r}
+(germ_day <- areas %>% 
+  mutate(tray = paste0("lc_", tray)) %>% 
+  left_join(germ, by = join_by(tray, block, ind)) %>%
+  pivot_longer(c(day, date), values_to = "germ_day") %>% 
+  drop_na(germ_day) %>% 
+  group_by(tray, block, ind) %>% 
+  filter(germ_day == min(germ_day)) %>% 
+  filter(!duplicated(tray, block, ind)))
+```
+
+Ok, now that we have some germ times, let's join it with the planting ids to get cross and parentage info and do some exploratory analysis.
+
+```{r}
+
 ```
 
