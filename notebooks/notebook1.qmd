@@ -16,6 +16,8 @@ library(dplyr)
 ```
 
 
+# Creating a file of seed sizes
+
 Seeds were planted 20 at a time into grids of 4 rows by 5 columns. Before planting the seeds, they were placed onto a grid as they were to be planted and a photo taken with a scale in the photo. The areas of the seeds were then measured from the photograph. Four researchers were working on the project, to get used to using imageJ and make sure there was no bias, the seeds were measured by all four researchers.  
 
 First, I'm reading in the four files and just calculate the mean seed area for each seed.
@@ -24,14 +26,14 @@ First, I'm reading in the four files and just calculate the mean seed area for e
 initials <- c("jk", "js", "lb", "rp")
 
 # there were some notes etc. beyond the 4th column, so only take the first 4 columns
-tmp <- read.csv(here(paste0("resources/seed_areas_", initials[1], ".csv")))[,1:4]
+tmp <- read.csv(here(paste0("data/raw/seed_areas_", initials[1], ".csv")))[,1:4]
 
 tmp$researcher <- initials[1]
 
 d <- tmp
 
 for(i in 2:length(initials)){
-  tmp <- read.csv(here(paste0("resources/seed_areas_", initials[i], ".csv")))[,1:4]
+  tmp <- read.csv(here(paste0("data/raw/seed_areas_", initials[i], ".csv")))[,1:4]
 
   tmp$researcher <- initials[i]
   
@@ -50,26 +52,78 @@ Next, I am going to attach the cross id and parentage to each individual.
 
 ```{r}
 
-ids <- read.csv(here("resources/planting_ids.csv"))
+ids <- read.csv(here("data/raw/planting_ids.csv"))
 
 # tray format is different in the two files, so need to change that to merge
 ids <- ids %>% 
   mutate(tray = gsub("LC", "lc_", tray)) %>% 
   select(tray, block, cross, mother, father)
 
+seed_size <- seed_size %>% 
+  left_join(ids) %>% 
+  mutate(cross = tolower(cross))
+
 ```
+
+The above code takes the generates an object with seed sizes and cross information. It will be used in the script `scripts/get_seed_size.R` to generate the intermediate data file `reulsts/data/seed_size.csv`
+
+# Exploratory data analysis with seed size
+
+First let's look at seed size vs cross type.
+
+```{r}
+seed_size %>% 
+  mutate(cross = tolower(cross),
+         cross = factor(cross, levels = c("cal", "bc_cal", "f1", "f2", "bc_lon", "lon"))) %>% 
+  drop_na(seed_area) %>% 
+  ggplot(aes(x = cross, y = seed_area)) +
+  geom_boxplot()
+```
+
+It looks like f1 and cal are the biggest with everything else being fairly similar. Let's just do a quick anova to see what that looks like.
+
+```{r}
+summary(mod <- aov(seed_area ~ cross, data = seed_size))
+TukeyHSD(mod)
+```
+
+So it seems like there might be some real differences here. I'm not so sure that it is because of the hybrid embryo though. Seed size is at least partially, if not mostly a maternal trait, so lets look at seed size vs seed parent.
+
+```{r}
+seed_size %>% 
+  mutate(cross = tolower(cross),
+         cross = factor(cross, levels = c("cal", "bc_cal", "f1", "f2", "bc_lon", "lon"))) %>%
+  drop_na(seed_area) %>% 
+  ggplot(aes(x = mother, y = seed_area)) +
+  geom_boxplot()
+```
+
+Looks like there are some differences, let's do a quick anova and see.
+
+```{r}
+summary(mod <- aov(seed_area ~ mother, data = seed_size))
+TukeyHSD(mod)
+```
+It looks like there might be some real differences between the mothers. Most of the parentals were crossed with an opposite parent as well, so let's add in paternal information to see how the embryo genotype affects seed size.
 
 
 ```{r}
 seed_size %>% 
-  left_join(ids) %>% 
   mutate(cross = tolower(cross),
-         cross = factor(cross, levels = c("cal", "bc_cal", "f1", "f2", "bc_lon", "lon"))) %>% 
-  #filter(cross %in% c("cal", "f1", "lon")) %>% 
-  #mutate(test = paste0(cross, mother)) %>% 
+         cross = factor(cross, levels = c("cal", "bc_cal", "f1", "f2", "bc_lon", "lon"))) %>%
   drop_na(seed_area) %>% 
   ggplot(aes(x = mother, y = seed_area, fill = father)) +
   geom_boxplot()
 ```
 
+It seems that making crosses between parents increases seed size within the same mother, i.e., f1 embryos produce bigger seeds. The F1 mother produces the same size seeds whether crossed with another f1, lon, or, cal.
+
+One last thing to do with seed size before moving on is that there is some missing data here. What happened is we tried to pre-apportion 20 seeds for each block ahead of time, but when we poured out the seeds or were arranging them to be photographed, we would sometimes loose a couple as they would jump around from static electricity or a misplaced sigh and then couldn't find them again. When that happened, we would leave the last places blank. So I just want to go through and figure out how many were missing from each block.
+
+```{r}
+seed_size %>% 
+  drop_na(seed_area) %>% 
+  group_by(tray, block) %>% 
+  summarise(n = n())
+```
 
