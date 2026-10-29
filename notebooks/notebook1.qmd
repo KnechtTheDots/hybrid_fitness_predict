@@ -68,7 +68,7 @@ seed_size <- seed_size %>%
 
 ```
 
-The above code takes the generates an object with seed sizes and cross information. It will be used in the script `scripts/get_seed_size.R` to generate the intermediate data file `reulsts/data/seed_size.csv`
+The above code takes the generates an object with seed sizes and cross information. It will be used in the script `scripts/wrangling.R` to generate the intermediate data file `reulsts/data/seed_size.csv`
 
 # Exploratory data analysis with seed size
 
@@ -250,15 +250,129 @@ germ_day %>%
 Is there a relationship between seed size and germination timing?
 
 ```{r}
+seed_size <- seed_size %>% ungroup()
+germ_day <- germ_day %>% ungroup()
 
 d <- seed_size %>% 
-  left_join(germ_day, by = join_by(tray, block, ind)) %>% 
-  drop_na(germ_day) %>% 
-  drop_na(seed_area)
-cor(d$seed_area, d$germ_day)
-plot(d$germ_day ~ d$seed_area)
-mod <- lm(d$germ_day ~ d$seed_area)
-abline(a = mod$coefficients[1], b = mod$coefficients[2], col = "red", lwd = 3)
+  left_join(germ_day)
+
+# since the experiment started on Julian day 260, subtract that from germ 
+# day to get the actual germ_day.
+
+d <- d %>% 
+  mutate(germ_day = germ_day - 260)
+
+d %>% 
+  ggplot(aes(x = seed_area, y = germ_day)) +
+  geom_point() +
+  geom_smooth(method = "lm")
+
 ```
 
 There definitely seems to be a negative relationship between seed size and germination timing.
+
+I'm going to add some of the above code to the `wrangling.R` script so that the output includes germination timing as well.
+
+# Probability of Germination
+
+Next I want to look at the probability of germination and check out the relationship between size and cross type.
+
+```{r}
+(d <- d %>% 
+  # first drop the NA in seed_area because they were places where 
+  # there are no seeds.
+  drop_na(seed_area) %>% 
+  # convert germ day into whether or not a plant germinated. NAs are 
+  # non-germinants
+  mutate(germ = ifelse(is.na(germ_day), 0, 1)) %>% 
+  mutate(cross = factor(cross, levels = c("cal", "bc_cal", "f1", "f2",
+                                          "bc_lon", "lon"))))
+```
+
+
+Let's look at germination by cross first.
+
+```{r}
+d %>% 
+  ggplot(aes(x = cross, y = germ)) +
+  # use bootstrap to plot the means and confidence intervals.
+  stat_summary(fun.data = mean_cl_boot, geom = "point") +
+  stat_summary(fun.data = mean_cl_boot, geom = "errorbar")
+```
+
+It looks like the f1s have a higher germination percentage than the rest, but not so different between everything else maybe.  
+
+Let's look at by mother now.
+
+```{r}
+d %>% 
+  ggplot(aes(x = mother, y = germ)) +
+  # use bootstrap to plot the means and confidence intervals.
+  stat_summary(fun.data = mean_cl_boot, geom = "point") +
+  stat_summary(fun.data = mean_cl_boot, geom = "errorbar")
+```
+```{r}
+pos <- position_jitterdodge(jitter.width = .2, jitter.height = 0)
+d %>% 
+  ggplot(aes(x = mother, y = germ, color = father)) +
+  # use bootstrap to plot the means and confidence intervals.
+  stat_summary(fun.data = mean_cl_boot, geom = "point", 
+               position = pos) +
+  stat_summary(fun.data = mean_cl_boot, geom = "errorbar", 
+               position = pos)
+```
+This is ugly, but I don't want to spend more time on it now. The pattern looks very much like the same plot made with seed size, so I'm expecting seed size should be predictive of germination. Let's look at that next.
+
+```{r}
+d %>% 
+  ggplot(aes(x = seed_area, y = factor(germ))) +
+  geom_boxplot()
+```
+Sure looks like the germinants were bigger. Let's do just a quick bootstrap to test the difference in the means.
+
+```{r}
+germ <- d$germ
+# standardize seed area for ease of interpretation
+seed_area <- (d$seed_area - mean(d$seed_area))/sd(d$seed_area)
+diff <- c()
+for(i in 1:1000){
+  samps <- sample(1:nrow(d), replace = T)
+  g <- germ[samps]
+  s <- seed_area[samps]
+  diff[i] <- mean(s[g==1]) - mean(s[g==0])
+}
+
+hist(diff)
+```
+
+So the germinating seeds are roughly 0.4 standard deviations larger than the non-germinants--on average.
+
+# Seedling Sizes
+
+The next set of data that needs to be wrangled is the seedling area measurements. At each timepoint, the seedlings were photographed and measured by two people (or will be, I still need to finish my measurements...). It might not be the absolute best approach---probably should model the differences---but I'm going to average across the multiple observations of each seedling at each timepoint.
+
+```{r}
+seedlings <- read.csv(here("data/raw/seedling_areas.csv"))
+
+seedlings %>% 
+  # make area numeric, then drop the NAs to get just observations.
+  mutate(area = as.numeric(area)) %>% 
+  drop_na(area) %>% 
+  # now average each seedling time.
+  group_by(tray, block, ind, time) %>% 
+  summarise(area = round(mean(area),3)) %>% 
+  ungroup() %>% 
+  mutate(tray = paste0("lc_", tray)) %>% 
+  # the time stamp is the same as above for germination, just going to 
+  # make it the day
+  separate(time, into = c("day", NA), sep = "_") %>% 
+  mutate(day = gsub("24", "", day),
+         day = as.numeric(day)) %>% 
+  # join with the germ day data to get cross information as well 
+  # as germination time to calculate age.
+  left_join(germ_day, by = join_by(tray, block, ind)) %>% 
+  mutate(age = day - germ_day) %>% 
+  select(tray, block, ind, area, age, cross, mother, father)
+```
+
+Add the above code to `wrangling.R` to create the seedling area file.

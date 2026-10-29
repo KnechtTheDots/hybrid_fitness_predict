@@ -1,7 +1,8 @@
 rule target:
     input:
         "notebooks/notebook1.pdf",
-        "data/wrangled/seed_size.csv"
+        "data/wrangled/seed_size_germ_day.csv",
+        "data/wrangled/seedling_areas.csv"
 
 rule render:
     input:
@@ -17,12 +18,13 @@ rule render:
         (quarto render {input} --to pdf) 2> {log}
         """
 
-rule seed_size:
+rule wrangling:
     output:
-        "data/wrangled/seed_size.csv"
+        seeds="data/wrangled/seed_size_germ_day.csv",
+        seedlings="data/wrangled/seedling_areas.csv"
     log:
-        log="results/logs/wrangling/seed_size.log"
+        log="results/logs/wrangling.log"
     conda:
         "envs/environment.yaml"
     script:
-        "scripts/get_seed_size.R"
+        "scripts/wrangling.R"
