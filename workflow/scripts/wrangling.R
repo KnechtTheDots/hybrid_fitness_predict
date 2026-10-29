@@ -93,7 +93,7 @@ areas <- areas %>%
     # since multiple researchers measured each day/seedling combo, there
     # are multiple instances of each day, so filter down to just one
     ungroup() %>% 
-    filter(!duplicated(paste0(tray, block, ind)))
+    filter(!duplicated(paste0(tray, "_", block, "_", ind)))
 
 germ_day <- areas %>% 
     mutate(tray = paste0("lc_", tray)) %>% 
@@ -123,25 +123,31 @@ germ_day %>%
 
 seedlings <- read.csv("data/raw/seedling_areas.csv")
 
-seedlings %>% 
+seedlings <- seedlings %>% 
   # make area numeric, then drop the NAs to get just observations.
   mutate(area = as.numeric(area)) %>% 
   drop_na(area) %>% 
-  # now average each seedling time.
-  group_by(tray, block, ind, time) %>% 
-  summarise(area = round(mean(area),3)) %>% 
-  ungroup() %>% 
-  mutate(tray = paste0("lc_", tray)) %>% 
   # the time stamp is the same as above for germination, just going to 
   # make it the day
   separate(time, into = c("day", NA), sep = "_") %>% 
   mutate(day = gsub("24", "", day),
          day = as.numeric(day)) %>% 
+  # now average each seedling time.
+  group_by(tray, block, ind, day) %>% 
+  summarise(area = round(mean(area),3)) %>% 
+  ungroup() %>% 
+  mutate(tray = paste0("lc_", tray)) %>% 
   # join with the germ day data to get cross information as well 
   # as germination time to calculate age.
   left_join(germ_day, by = join_by(tray, block, ind)) %>% 
-  mutate(age = day - germ_day) %>% 
-  select(tray, block, ind, area, age, cross, mother, father) %>% 
+  mutate(age = day - germ_day) %>%
+  # there are some aberrant observations, remove them see notebook1 for more information
+  filter(!(paste0(tray, block, ind) %in% c("lc_2313", "lc_6911",
+                                           "lc_2112", "lc_4912",
+                                           "lc_5117", "lc_5117"))) %>% 
+  filter(log(area) > -2.5) %>%
+  # select columns and write to the csv
+  select(tray, block, ind, area, age, cross, mother, father) %>%
   write.csv(snakemake@output[["seedlings"]], row.names = F, quote = F)
 
 

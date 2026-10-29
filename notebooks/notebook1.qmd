@@ -70,7 +70,7 @@ seed_size <- seed_size %>%
 
 The above code takes the generates an object with seed sizes and cross information. It will be used in the script `scripts/wrangling.R` to generate the intermediate data file `reulsts/data/seed_size.csv`
 
-# Exploratory data analysis with seed size
+## Exploratory data analysis with seed size
 
 First let's look at seed size vs cross type.
 
@@ -188,7 +188,8 @@ The time column here is when the seedling area was measured. Again, I'm going to
   # since multiple researchers measured each day/seedling combo, there
   # are multiple instances of each day, so filter down to just one
   ungroup() %>% 
-  filter(!duplicated(paste0(tray, block, ind))))
+  filter(!duplicated(paste0(tray, "_", block, "_", ind))))
+
 ```
 
 Now I'm going to join the two data sets and select the earliest observation.
@@ -203,9 +204,10 @@ Now I'm going to join the two data sets and select the earliest observation.
   filter(germ_day == min(germ_day)) %>% 
   filter(!duplicated(tray, block, ind)) %>% 
   select(tray, block, ind, germ_day))
+
 ```
 
-# Exploratory analysis of germination timing
+## Exploratory analysis of germination timing
 
 Ok, now that we have some germ times, let's join it with the planting ids to get cross and parentage info and do some exploratory analysis.
 
@@ -273,7 +275,7 @@ There definitely seems to be a negative relationship between seed size and germi
 
 I'm going to add some of the above code to the `wrangling.R` script so that the output includes germination timing as well.
 
-# Probability of Germination
+## Probability of Germination
 
 Next I want to look at the probability of germination and check out the relationship between size and cross type.
 
@@ -354,25 +356,141 @@ The next set of data that needs to be wrangled is the seedling area measurements
 ```{r}
 seedlings <- read.csv(here("data/raw/seedling_areas.csv"))
 
-seedlings %>% 
+(seedlings <- seedlings %>% 
   # make area numeric, then drop the NAs to get just observations.
   mutate(area = as.numeric(area)) %>% 
   drop_na(area) %>% 
-  # now average each seedling time.
-  group_by(tray, block, ind, time) %>% 
-  summarise(area = round(mean(area),3)) %>% 
-  ungroup() %>% 
-  mutate(tray = paste0("lc_", tray)) %>% 
   # the time stamp is the same as above for germination, just going to 
   # make it the day
   separate(time, into = c("day", NA), sep = "_") %>% 
   mutate(day = gsub("24", "", day),
          day = as.numeric(day)) %>% 
+  # now average each seedling time.
+  group_by(tray, block, ind, day) %>% 
+  summarise(area = round(mean(area),3)) %>% 
+  ungroup() %>% 
+  mutate(tray = paste0("lc_", tray)) %>% 
   # join with the germ day data to get cross information as well 
   # as germination time to calculate age.
   left_join(germ_day, by = join_by(tray, block, ind)) %>% 
   mutate(age = day - germ_day) %>% 
-  select(tray, block, ind, area, age, cross, mother, father)
+  select(tray, block, ind, area, age, cross, mother, father))
 ```
 
 Add the above code to `wrangling.R` to create the seedling area file.
+
+## Some exploratory analysis of growth.
+
+```{r}
+seedlings %>% 
+  ggplot(aes(x = age, y = area)) +
+  geom_point()
+```
+
+There are some very big seedlings at timepoint 0. Those are almost certainly errors. I'm eventually going to remove all the time 0 anyway because the plants are still unfolding on the germination day, so it is misleading.Let's filter for all the age 0's and see what's going on.
+
+```{r}
+seedlings %>% 
+  filter(age == 0)
+```
+
+Let's plot log of area and see what that looks like.
+
+```{r}
+seedlings %>% 
+  mutate(l_area = log(area)) %>% 
+  ggplot(aes(x = age, y = l_area)) +
+  geom_point()
+```
+
+Still not sure what is going on with those big points at timepoint 0, I think maybe a date was marked incorrectly for them so they are not really timepoint 0. Whatever it is, those individuals don't seem to be outliers for the rest of the time, so I think it will be fine when I remove the timepoint 0 measurements.  
+
+There are also a couple positive outliers on day 3 and 10, and some big negative outliers on days 5 and 6. I'm going to check them out, they are probabaly mismeasurments and I will just remove those particular observations.
+
+```{r}
+seedlings %>% 
+  mutate(l_area = log(area)) %>% 
+  filter(age == 3) %>% 
+  filter(l_area > 2.5)
+
+# so at age 3, it is lc2-3-13 and lc6-9-11, let's plot those two
+
+seedlings %>% 
+  mutate(l_area = log(area)) %>% 
+  filter(tray == "lc_2" & block == 3 & ind == 13 | 
+           tray == "lc_6" & block == 9 & ind == 11)
+```
+
+Ok, so they are smaller on day 4 than day 3, which negative growth is possible, but since they are outliers on day 3, I think this is some sort of recording error and I'm going to remove these individuals.  
+
+Now to look at thos individuals that are small at ages 5 and 6 and see if there is something systematic or if they are just wierd measurements.
+
+```{r}
+seedlings %>% 
+  mutate(l_area = log(area)) %>% 
+  filter(l_area < -2.5)
+
+# it is lc_3-3-4 and lc3-12-16
+seedlings %>% 
+  mutate(l_area = log(area)) %>% 
+  filter(tray == "lc_3" & block == 3 & ind == 4 | 
+           tray == "lc_3" & block == 12 & ind == 16)
+```
+
+Ok, these are clearly just bad measurements for some reason. I will remove the single observations.  
+
+Make those filters and then re-check.
+
+```{r}
+seedlings %>% 
+  mutate(l_area = log(area)) %>% 
+  filter(paste0(tray, block, ind) != "lc_2313") %>% 
+  filter(paste0(tray, block, ind) != "lc_6911") %>% 
+  filter(l_area > -2.5) %>% 
+  ggplot(aes(x = age, y = l_area)) +
+  geom_point()
+```
+
+Let's take a peek at those small individuals at the bigger sizes to see what's going on there.
+
+```{r}
+id <- seedlings %>% 
+  mutate(l_area = log(area)) %>% 
+  filter(age > 12 & l_area < 2) %>% 
+  mutate(id = paste0(tray, block, ind)) %>% 
+  pull(id)
+
+seedlings %>% 
+  mutate(l_area = log(area)) %>% 
+  filter(paste0(tray, block, ind) %in% id) %>% 
+  ggplot(aes(x = age, y = l_area, group = paste0(tray, block, ind))) +
+  geom_point() +
+  geom_line()
+```
+
+For the most part, those look fine, but there are a couple that for some reason only have one or two observations, but given that they are later ages, that shouldn't happen. Checking into it.
+
+```{r}
+seedlings %>% 
+  mutate(l_area = log(area)) %>% 
+  filter(paste0(tray, block, ind) %in% id) %>% 
+  group_by(tray, block, ind) %>% 
+  summarise(n = n(),
+            age_max = max(age)) %>% 
+  filter(n <= 2)
+```
+
+Ok, these should have more observations given the age, so I'm going to add them to the prune list.
+
+```{r}
+seedlings %>% 
+  mutate(l_area = log(area)) %>% 
+  filter(!(paste0(tray, block, ind) %in% c("lc_2313", "lc_6911",
+                                         "lc_2112", "lc_4912",
+                                         "lc_5117", "lc_5117"))) %>% 
+  filter(l_area > -2.5) %>% 
+  ggplot(aes(x = age, y = l_area)) +
+  geom_point()
+```
+
+
