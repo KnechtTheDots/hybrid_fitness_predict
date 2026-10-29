@@ -238,7 +238,7 @@ germ_day %>%
   ggplot(aes(x = mother, y = germ_day, fill = father)) +
   geom_boxplot()
 ```
-The f2 pattern looks really wierd so let's look at the distribution of germ days.
+The f2 pattern looks really weird so let's look at the distribution of germ days.
 
 ```{r}
 germ_day %>% 
@@ -247,3 +247,18 @@ germ_day %>%
   facet_grid(mother ~ father)
 ```
 
+Is there a relationship between seed size and germination timing?
+
+```{r}
+
+d <- seed_size %>% 
+  left_join(germ_day, by = join_by(tray, block, ind)) %>% 
+  drop_na(germ_day) %>% 
+  drop_na(seed_area)
+cor(d$seed_area, d$germ_day)
+plot(d$germ_day ~ d$seed_area)
+mod <- lm(d$germ_day ~ d$seed_area)
+abline(a = mod$coefficients[1], b = mod$coefficients[2], col = "red", lwd = 3)
+```
+
+There definitely seems to be a negative relationship between seed size and germination timing.
