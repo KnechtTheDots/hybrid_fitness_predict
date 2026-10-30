@@ -151,4 +151,18 @@ seedlings <- seedlings %>%
   write.csv(snakemake@output[["seedlings"]], row.names = F, quote = F)
 
 
+
+# Drought Trial Survival --------------------------------------------------
+
+survival <- read.csv("data/raw/terminal_drought_trial.csv")
+
+survival %>% 
+  mutate(ind = id) %>% 
+  select(tray, block, ind, alive_nov_9) %>% 
+  left_join(germ_day) %>% 
+  drop_na(germ_day) %>% 
+  mutate(alive_nov_9 = ifelse(is.na(alive_nov_9), 0, 1)) %>% 
+  select(tray, block, ind, survive = alive_nov_9, cross) %>% 
+  write.csv(snakemake@output[["survival"]])
+
 on.exit(sink())

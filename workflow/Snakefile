@@ -2,7 +2,8 @@ rule target:
     input:
         "notebooks/notebook1.pdf",
         "data/wrangled/seed_size_germ_day.csv",
-        "data/wrangled/seedling_areas.csv"
+        "data/wrangled/seedling_areas.csv",
+        "data/wrangled/survival.csv"
 
 rule render:
     input:
@@ -21,7 +22,8 @@ rule render:
 rule wrangling:
     output:
         seeds="data/wrangled/seed_size_germ_day.csv",
-        seedlings="data/wrangled/seedling_areas.csv"
+        seedlings="data/wrangled/seedling_areas.csv",
+        survival="data/wrangled/survival.csv"
     log:
         log="results/logs/wrangling.log"
     conda:

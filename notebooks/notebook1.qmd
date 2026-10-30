@@ -493,4 +493,111 @@ seedlings %>%
   geom_point()
 ```
 
+I'm just going to check out those big ones on day zero again, just to see if I can figure out what's going on and save them.
+
+```{r}
+big_at_0 <- seedlings %>% 
+  mutate(l_area = log(area)) %>% 
+  filter(age < 1 & l_area > 2) %>% 
+  mutate(id = paste0(tray, "_", block, "_", ind)) %>% 
+  pull(id)
+
+seedlings %>% 
+  mutate(l_area = log(area)) %>% 
+  filter(paste0(tray, "_", block, "_", ind) %in% big_at_0)
+```
+
+It looks like they are just one off screw ups for some reason, so I'm just going to remove them.  
+
+
+```{r}
+seedlings <- seedlings %>% 
+  mutate(l_area = log(area)) %>% 
+  filter(!(paste0(tray, block, ind) %in% c("lc_2313", "lc_6911",
+                                         "lc_2112", "lc_4912",
+                                         "lc_5117", "lc_5117"))) %>% 
+  filter(l_area > -2.5)
+```
+
+
+Just re-plot without the age 0.
+
+```{r}
+seedlings %>% 
+  filter(age > 0) %>% 
+  ggplot(aes(x = age, y = l_area)) +
+  geom_point()
+
+seedlings %>% 
+  filter(age > 0) %>% 
+  mutate(id = paste0(tray, "_", block, "_", ind)) %>% 
+  ggplot(aes(x = age, y = l_area, group = id, color = cross)) +
+  geom_line()
+```
+
+It's hard to make anything from that. Let's just estimate the relative growth rate for each individual.
+
+```{r}
+# define a function for doing the linear regression and extracting
+# the slope coefficient.
+
+rgr <- function(size, age){
+  mod <- lm(size ~ age)
+  return(coef(mod)[[2]])
+}
+
+
+(rgr <- seedlings %>% 
+  filter(age > 0) %>% 
+  mutate(id = paste0(tray, "-", block, "-", ind)) %>% 
+  group_by(id) %>% 
+  summarise(rgr = rgr(l_area, age)) %>% 
+  separate(id, into = c("tray", "block", "ind"), sep = "-") %>% 
+  mutate(block = as.integer(block)) %>% 
+  left_join(ids, by = join_by(tray, block)) %>% 
+  mutate(cross = tolower(cross)))
+
+```
+
+
+Now lets plot the RGRs by cross.
+
+```{r}
+rgr %>% 
+  mutate(cross = factor(cross, levels = c("cal", "bc_cal", "f1", "f2", "bc_lon", "lon"))) %>% 
+  ggplot(aes(x = cross, y = rgr)) +
+  stat_summary(fun.data = mean_cl_boot, geom = "point") +
+  stat_summary(fun.data = mean_cl_boot, geom = "errorbar")
+```
+
+
+Hard to see much differences here, but will wait for the full model to see.
+
+# Survival Data
+
+Finally, I need to get the survival data in shape.
+
+```{r}
+survival <- read.csv(here("data/raw/terminal_drought_trial.csv"))
+```
+
+```{r}
+(survival <- survival %>% 
+  mutate(ind = id) %>% 
+  select(tray, block, ind, alive_nov_9) %>% 
+  left_join(germ_day) %>% 
+  drop_na(germ_day) %>% 
+  mutate(alive_nov_9 = ifelse(is.na(alive_nov_9), 0, 1)))
+```
+
+Add the above code to the `wrangling.R script.
+
+
+```{r}
+survival %>% 
+  group_by(cross) %>% 
+  ggplot(aes(x = cross, y = alive_nov_9)) +
+  stat_summary(fun.data = mean_cl_boot, geom = "point") +
+  stat_summary(fun.data = mean_cl_boot, geom = "errorbar")
+```
 
