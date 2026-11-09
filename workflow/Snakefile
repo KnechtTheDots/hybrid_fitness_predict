@@ -1,17 +1,32 @@
 rule target:
     input:
         "notebooks/notebook1.pdf",
+        "notebooks/notebook2.pdf",
         "data/wrangled/seed_size_germ_day.csv",
         "data/wrangled/seedling_areas.csv",
         "data/wrangled/survival.csv"
 
-rule render:
+rule render1:
     input:
         "notebooks/notebook1.qmd"
     output:
         "notebooks/notebook1.pdf"
     log:
         "results/logs/notebook1.log"
+    conda:
+        "envs/environment.yaml"
+    shell:
+        """
+        (quarto render {input} --to pdf) 2> {log}
+        """
+
+rule render2:
+    input:
+        "notebooks/notebook2.qmd"
+    output:
+        "notebooks/notebook2.pdf"
+    log:
+        "results/logs/notebook2.log"
     conda:
         "envs/environment.yaml"
     shell:

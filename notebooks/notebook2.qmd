@@ -1,0 +1,71 @@
+---
+title: "notebook2"
+format:
+  pdf:
+    include-in-header:
+      - text: |
+          \usepackage{mathtools}
+          \usepackage{amsmath}
+          \usepackage{amssymb}
+---
+
+The purpose of this notebook is to record my decision making during the model building process. I will start with a simple model and work up to the final model, that way I can check computation and model fit along the way. 
+
+Load in packages.
+
+```{r}
+#| message: false
+#| warning: false
+library(cmdstanr)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(bayesplot)
+library(posterior)
+```
+
+# Overall relative growth rate
+
+First, the simplest model is just fitting a single intercept and slope to the entire data set. The plants are growing exponentially during this life-stage: $s_t = s_0 e^{rt}$. Here $s_t$ is size at time $t$, and $s_0$ is the original size. $r$ is the growth rate, here relative growth rate, and $t$ is the time since germination of the seedling. By taking the log of this we get: $\log(s_t) = \log(s_0) + rt$ which we can fit using a normal linear regression.  
+
+Here's the model:
+
+\begin{equation} \label{eq:lin_reg}
+\begin{aligned}
+\log(s_{it}) &\sim \mathrm{Normal}(\mu_{it}, \sigma) \\
+\mu_{it} &= \log(s_0) + rgr \times t \\
+\alpha &\sim \mathrm{Normal}(0, 1) \\
+rgr &\sim \mathrm{Normal}(0.24, 0.1) \\
+\sigma &\sim \mathrm{Exponential}(1)
+\end{aligned}
+\end{equation}
+
+```{cat, engine.opts = list(file = "my_model.stan", lang = "stan")}
+data{
+  int N; // number of observations
+  vector[N] l_size; // size observations
+  vector[N] age; // age of observations
+}
+parameters{
+  real l_size0; // log size at time 0
+  real rgr; // relative growth rate
+  real<lower=0> sigma; // standard deviation of errors
+}
+model{
+  // priors
+  l_size0 ~ normal(0, 1);
+  rgr ~ normal(0.24, 0.1);
+  sigma ~ exponential(1);
+  
+  // likelihood
+  l_size ~ normal(l_size0 + rgr*age, sigma);
+}
+```
+
+
+
+Now use Equation \ref{eq:lin_reg}.
+
+
+
+

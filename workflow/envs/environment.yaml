@@ -14,5 +14,6 @@ dependencies:
 -   r-here=1.0.2
 -   r-knitr=1.52
 -   r-rmarkdown=2.32
+-   r-hmisc=5.3_0
 -   cmdstan=2.38.0
 -   quarto=1.9.38

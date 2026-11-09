@@ -5,3 +5,4 @@
 .snakemake/
 results
 data/wrangled
+notebooks/model*

@@ -582,15 +582,16 @@ survival <- read.csv(here("data/raw/terminal_drought_trial.csv"))
 ```
 
 ```{r}
-(survival <- survival %>% 
+survival <- survival %>% 
   mutate(ind = id) %>% 
   select(tray, block, ind, alive_nov_9) %>% 
   left_join(germ_day) %>% 
   drop_na(germ_day) %>% 
-  mutate(alive_nov_9 = ifelse(is.na(alive_nov_9), 0, 1)))
+  mutate(alive_nov_9 = ifelse(is.na(alive_nov_9), 0, 1))
+head(survival)
 ```
 
-Add the above code to the `wrangling.R script.
+Add the above code to the `wrangling.R script`.
 
 
 ```{r}
@@ -599,5 +600,7 @@ survival %>%
   ggplot(aes(x = cross, y = alive_nov_9)) +
   stat_summary(fun.data = mean_cl_boot, geom = "point") +
   stat_summary(fun.data = mean_cl_boot, geom = "errorbar")
+
 ```
 
+Definitely lower survival in the recombinant crosses, but maybe not due to growth rate?
