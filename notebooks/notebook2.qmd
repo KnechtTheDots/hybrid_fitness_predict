@@ -100,7 +100,8 @@ fit <- mod$sample(
   data = dat,
   chains = 4,
   parallel_chains = 4,
-  show_messages = F
+  show_messages = F,
+  show_exceptions = F
 )
 
 fit$summary()
