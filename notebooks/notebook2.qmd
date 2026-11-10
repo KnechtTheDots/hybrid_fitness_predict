@@ -22,9 +22,10 @@ library(tidyr)
 library(ggplot2)
 library(bayesplot)
 library(posterior)
+library(here)
 ```
 
-# Overall relative growth rate
+# Overall relative growth rate and initial size
 
 First, the simplest model is just fitting a single intercept and slope to the entire data set. The plants are growing exponentially during this life-stage: $s_t = s_0 e^{rt}$. Here $s_t$ is size at time $t$, and $s_0$ is the original size. $r$ is the growth rate, here relative growth rate, and $t$ is the time since germination of the seedling. By taking the log of this we get: $\log(s_t) = \log(s_0) + rt$ which we can fit using a normal linear regression.  
 
@@ -32,15 +33,20 @@ Here's the model:
 
 \begin{equation} \label{eq:lin_reg}
 \begin{aligned}
-\log(s_{it}) &\sim \mathrm{Normal}(\mu_{it}, \sigma) \\
-\mu_{it} &= \log(s_0) + rgr \times t \\
-\alpha &\sim \mathrm{Normal}(0, 1) \\
+\log(s) &\sim \mathrm{Normal}(\mu, \sigma) \\
+\mu &= \log(s_0) + rgr \times age \\
+\log(s_0) &\sim \mathrm{Normal}(0, 1) \\
 rgr &\sim \mathrm{Normal}(0.24, 0.1) \\
 \sigma &\sim \mathrm{Exponential}(1)
 \end{aligned}
 \end{equation}
 
-```{cat, engine.opts = list(file = "my_model.stan", lang = "stan")}
+Stan models are broken into three main blocks. Data describes the data, here we are telling Stan that there are N data points, there is a vector of size N l_size, that will be the log sizes and a vector of length N of ages. The parameters block lays out the unknown parameters from the model. Here l_size0 is the size at time 0. rgr is the relative growth rate, and sigma is the standard deviation of the residuals. This is a bog standard linear regression. Comments in Stan follow a double forward slash: `//`. The prior distribution of $rgr$ comes from a previous study. 
+
+Here is the Stan model for model \ref{eq:lin_reg}. 
+
+```{cat, engine.opts = list(file = "model.stan", lang = "stan")}
+#| eval: true
 data{
   int N; // number of observations
   vector[N] l_size; // size observations
@@ -64,8 +70,498 @@ model{
 
 
 
-Now use Equation \ref{eq:lin_reg}.
+Now fit the model to the data:
+
+```{r}
+# read in the seedling size data
+sizes <- read.csv(here("data/wrangled/seedling_areas.csv"))
+sizes <- sizes %>% 
+  # remove the germination day and individual lc_2_2_20, doesn't have
+  # seed data, so I'm removing it
+  filter(age > 0,
+         paste0(tray, "_", block, "_", ind) != "lc_2_2_20")
+```
 
 
+```{r}
+#| eval: true
+# make a data set for Stan
+dat <- list(
+  N = nrow(sizes),
+  l_size = log(sizes$area),
+  age = sizes$age
+)
+
+# compile the model
+mod <- cmdstan_model(here("notebooks/model.stan"))
+
+# fit the model
+fit <- mod$sample(
+  data = dat,
+  chains = 4,
+  parallel_chains = 4,
+  show_messages = F
+)
+
+fit$summary()
+fit$diagnostic_summary()
+```
+
+The model fits well, there are no divergences, everything looks good. Looks like the mean relative growth rate is about 0.23 with mean log size0 of about 0.47 and a residual standard error of about 0.51. Good benchmarks, I'm not too interested in these values though, next is to start inferring individual growth rates.
+
+# Individual growth rates
+
+The next step in the model is to start fitting individual growth rates, as all the individuals were measured at multiple time points, we can estimate individual growth rate. The model is similar to model \ref{eq:lin_reg} except now we allow relative growth rate to vary with individual. First is that $rgr$ from model \ref{eq:lin_reg} now becomes the mean relative growth rate: $\mu_{rgr}$. Now we need to fit a standard deviation for the distribution of relative growth rates: $\sigma_{rgr}$. With these additions the model of varying slopes becomes:
+
+
+\begin{equation} \label{eq:ind_rgr}
+\begin{aligned}
+\log(s) &\sim \mathrm{Normal}(\mu, \sigma) \\
+\mu &= \log(s_0) + rgr \times age \\
+\log(s_0) &\sim \mathrm{Normal}(0, 1) \\
+\sigma &\sim \mathrm{Exponential}(1) \\
+rgr &\sim \mathrm{Normal}(\mu_{rgr}, \sigma_{rgr}) \\
+\mu_{rgr} &\sim \mathrm{Normal}(0.24, 0.1) \\
+\sigma_{rgr} &\sim \mathrm{Exponential}(1) \\
+\end{aligned}
+\end{equation}
+
+The Stan program for this model is:
+
+```{cat, engine.opts = list(file = "model.stan", lang = "stan")}
+#| eval: true
+data{
+  int N; // number of observations
+  int J; // number of individuals
+  vector[N] l_size; // size observations
+  vector[N] age; // age of observations
+  array[N] int id; // index of individuals
+}
+parameters{
+  real l_size0; // log size at time 0
+  real<lower=0> sigma; // standard deviation of errors
+  real mu_rgr; // mean relative growth rate
+  real<lower=0> sigma_rgr;
+  vector[J] rgr;
+}
+model{
+  // priors
+  l_size0 ~ normal(0, 1);
+  sigma ~ exponential(1);
+  mu_rgr ~ normal(0.24, 0.1);
+  sigma_rgr ~ exponential(1);
+  rgr ~ normal(mu_rgr, sigma_rgr);
+  
+  // likelihood
+  // Define the expected value for each observation
+  vector[N] mu;
+  for(i in 1:N){
+    mu[i] = l_size0 + rgr[id[i]] * age[i];
+  }
+  l_size ~ normal(mu, sigma);
+}
+```
+
+```{r}
+# get the data ready
+d <- sizes %>% 
+  mutate(id = paste0(tray, "_", block, "_", ind),
+         id = as.integer(factor(id)))
+head(d)
+```
+
+
+```{r}
+#| eval: true
+# compile the model and get the data ready
+mod <- cmdstan_model(here("notebooks/model.stan"))
+
+dat <- list(
+  N = nrow(d),
+  J = length(unique(d$id)),
+  l_size = log(d$area),
+  age = d$age,
+  id = d$id
+)
+
+fit <- mod$sample(
+  data = dat,
+  chains = 4,
+  parallel_chains = 4,
+  show_messages = F,
+  show_exceptions = F
+)
+
+fit$diagnostic_summary()
+fit$summary()
+```
+
+Everything looks good computationally, Allowing the slopes to vary has eaten up some of the residual variance as expected, but I don't want to really look at them yet, I need to let the intercepts vary first.
+
+# Individual growth rates and individual initial sizes
+
+In model \ref{eq:ind_rgr}, I let the slopes vary by individual, but gave all the individuals the same starting size. I'm now going to let the individuals have the different log(size0) as well. Typically in these varying intercepts and varying slopes models, we also try to fit a correlation to the slopes and intercepts. I will work up to that. It is common that introducing covariance matrices makes the computation more difficult, so I'm going to fit the slopes and intercepts "independently" first that way I know whether it was adding the intercept terms or the covariance that messes up the computation later.  
+
+Adding a varying log(size0) is similar to varying $rgr$ in model \ref{eq:ind_rgr}. We now have a grand mean for log(size0) as well as a variance (standard deviation) term. The model now becomes:
+
+
+\begin{equation} \label{eq:var_rgr_s0}
+\begin{aligned}
+\log(s) &\sim \mathrm{Normal}(\mu, \sigma) \\
+\mu &= \log(s_0) + rgr \times age \\
+\sigma &\sim \mathrm{Exponential}(1) \\
+rgr &\sim \mathrm{Normal}(\mu_{rgr}, \sigma_{rgr}) \\
+\mu_{rgr} &\sim \mathrm{Normal}(0.24, 0.1) \\
+\sigma_{rgr} &\sim \mathrm{Exponential}(1) \\
+\log(s_0) &\sim \mathrm{Normal}(\mu_{s0}, \sigma_{s0}) \\
+\mu_{s0} &\sim \mathrm{Normal}(0, 1) \\
+\sigma_{s0} &\sim \mathrm{Exponential}(1)
+\end{aligned}
+\end{equation}
+
+The Stan program for this model is:
+
+```{cat, engine.opts = list(file = "model.stan", lang = "stan")}
+#| eval: true
+data{
+  int N; // number of observations
+  int J; // number of individuals
+  vector[N] l_size; // size observations
+  vector[N] age; // age of observations
+  array[N] int id; // index of individuals
+}
+parameters{
+  real<lower=0> sigma; // standard deviation of errors
+  real mu_rgr; // mean relative growth rate
+  real<lower=0> sigma_rgr; // standard deviation of growth rates
+  vector[J] rgr; // individual relative growth rates
+  real mu_s0; // mean size0 
+  real<lower=0> sigma_s0; // standard deviation of initial log sizes
+  vector[J] l_size0; // individual log size0
+}
+model{
+  // priors
+  sigma ~ exponential(1);
+  mu_rgr ~ normal(0.24, 0.1);
+  sigma_rgr ~ exponential(1);
+  rgr ~ normal(mu_rgr, sigma_rgr);
+  l_size0 ~ normal(mu_s0, sigma_s0);
+  mu_s0 ~ normal(0, 1);
+  sigma_s0 ~ exponential(1);
+  
+  // likelihood
+  // Define the expected value for each observation
+  vector[N] mu;
+  for(i in 1:N){
+    mu[i] = l_size0[id[i]] + rgr[id[i]] * age[i];
+  }
+  l_size ~ normal(mu, sigma);
+}
+```
+
+```{r}
+#| eval: true
+# compile the model and get the data ready
+mod <- cmdstan_model(here("notebooks/model.stan"))
+
+dat <- list(
+  N = nrow(d),
+  J = length(unique(d$id)),
+  l_size = log(d$area),
+  age = d$age,
+  id = d$id
+)
+
+fit <- mod$sample(
+  data = dat,
+  chains = 4,
+  parallel_chains = 4,
+  show_messages = F,
+  show_exceptions = F
+)
+
+fit$diagnostic_summary()
+summ <- fit$summary()
+
+
+```
+No warnings from the diagnostic summaries. Let's look at the ranges of rhat and the effective sample sizes to just double check.
+
+```{r}
+#| eval: true
+hist(summ$rhat)
+hist(summ$ess_bulk)
+hist(summ$ess_tail)
+```
+
+Everything looks really good here. Let's let them covary.
+
+# Covarying slopes and intercepts
+
+The next step is to try to infer a covariance between the slopes and intercepts. Probably the most straightforward way to do this, since it is easier to interpret standard deviations and correlations than variances and covariances, is to estimate a vector of standard deviations and a correlation matrix:
+
+\begin{equation*}
+\begin{bmatrix}
+\log(s0) \\
+rgr
+\end{bmatrix} \sim \mathrm{MVNormal}\left(\begin{bmatrix} \mu_{s0} \\ \mu_{rgr}
+\end{bmatrix}, \begin{bmatrix} \sigma_{s0} & 0 \\ 0 & \sigma_{rgr}\end{bmatrix} \mathbf{R} \begin{bmatrix} \sigma_{s0} & 0 \\ 0 & \sigma_{rgr}\end{bmatrix} \right)
+\end{equation*}
+
+
+
+Where $\mathbf{R}$ is a correlation matrix. All that is needed is to replace the independent priors on $rgr$ and $l_size0$ in model \ref{eq:var_rgr_s0} with the above and add a prior on $\mathbf{R}$. To make things a little simpler, I will define a vector $\boldsymbol{\tau} = \begin{bmatrix} \sigma_{s0} & \sigma_{rgr} \end{bmatrix}^T$ make the covariance matrix:
+
+
+\begin{equation*}
+\begin{bmatrix} \sigma_{s0} & 0 \\ 0 & \sigma_{rgr}\end{bmatrix} \mathbf{R} \begin{bmatrix} \sigma_{s0} & 0 \\ 0 & \sigma_{rgr}\end{bmatrix} = \mathrm{diag}(\boldsymbol{\tau})\space\mathbf{R}\space \mathrm{diag}(\boldsymbol{\tau})
+\end{equation*}
+
+
+
+So the model with covarying slopes and intercepts is:
+
+
+\begin{equation} \label{eq:covary}
+\begin{aligned}
+\log(s) &\sim \mathrm{Normal}(\mu, \sigma) \\
+\mu &= \log(s_0) + rgr \times age \\
+\sigma &\sim \mathrm{Exponential}(1) \\
+\begin{bmatrix}
+\log(s0) \\
+rgr
+\end{bmatrix} &\sim \mathrm{MVNormal}\left(\begin{bmatrix} \mu_{s0} \\ \mu_{rgr}
+\end{bmatrix}, \mathrm{diag}(\boldsymbol{\tau}) \space \mathbf{R} \space  \mathrm{diag}(\boldsymbol{\tau}) \right) \\
+\mu_{rgr} &\sim \mathrm{Normal}(0.24, 0.1) \\
+\mu_{s0} &\sim \mathrm{Normal}(0, 1) \\
+\boldsymbol{\tau} &\sim \mathrm{Exponential}(1) \\
+\mathbf{R} &\sim \mathrm{LKJcorr}(2)
+\end{aligned}
+\end{equation}
+
+The stan program for this equation is:
+
+```{cat, engine.opts = list(file = "model.stan", lang = "stan")}
+#| eval: true
+data{
+  int N; // number of observations
+  int J; // number of individuals
+  vector[N] l_size; // size observations
+  vector[N] age; // age of observations
+  array[N] int id; // index of individuals
+}
+parameters{
+  real<lower=0> sigma; // standard deviation of errors
+  real mu_rgr; // mean relative growth rate
+  real mu_s0; // mean size0
+  array[J] vector[2] Mu; // array of vectors carrying l_size0 and rgr
+  vector<lower=0>[2] tau; // standard deviation of l_size0 and rgr
+  corr_matrix[2] R;
+}
+model{
+  // priors
+  sigma ~ exponential(1);
+  mu_rgr ~ normal(0.24, 0.1);
+  mu_s0 ~ normal(0, 1);
+  tau ~ exponential(1);
+  R ~ lkj_corr(2);
+  
+  Mu ~ multi_normal([mu_s0, mu_rgr]', quad_form_diag(R, tau)); 
+  
+  // likelihood
+  // Define the expected value for each observation
+  vector[N] mu;
+  for(i in 1:N){
+    mu[i] = Mu[id[i], 1] + Mu[id[i], 2] * age[i];
+  }
+  l_size ~ normal(mu, sigma);
+}
+```
+
+
+```{r}
+#| eval: true
+# compile the model and get the data ready
+mod <- cmdstan_model(here("notebooks/model.stan"))
+
+dat <- list(
+  N = nrow(d),
+  J = length(unique(d$id)),
+  l_size = log(d$area),
+  age = d$age,
+  id = d$id
+)
+
+fit <- mod$sample(
+  data = dat,
+  chains = 4,
+  parallel_chains = 4,
+  show_messages = F,
+  show_exceptions = F
+)
+
+fit$diagnostic_summary()
+summ <- fit$summary()
+
+```
+
+Shockingly, everything looks good. Let's check out rhat and ESS to double check.
+
+```{r}
+#| eval: true
+hist(summ$rhat)
+hist(summ$ess_bulk)
+hist(summ$ess_tail)
+```
+Looks great! I think the next step is to add seed size information into the model.
+
+# Predicting initial size using seed size
+
+```{r}
+seed <- read.csv(here("data/wrangled/seed_size.csv"))
+seed <- seed %>% 
+  select(tray, block, ind, seed_area)
+head(seed)
+d <- d %>% 
+  left_join(seed, by = join_by(tray, block, ind))
+head(d)
+```
+
+I suspect that the log(seed_size) is linearly related to log(size0). Just to take a quick peak to see if that is more or less true, let's plot the log of size at the earliest time point of each individual against the log of seed size.
+
+```{r}
+d %>% 
+  group_by(tray, block, ind) %>% 
+  filter(age == 1) %>% 
+  mutate(l_area = log(area),
+         l_seed = log(seed_area)) %>% 
+  ggplot(aes(x = l_seed, y = l_area)) +
+  geom_point()
+```
+
+
+Seems to be more or less linear, and likely closer at time point 0 so a linear model of l_size0 as a function of l_seed_size is probably a decent assumption.
+
+The model will be very similar to model \ref{eq:covary}, but now it will have a the log of the initial size will be modeled: $\mu_{s0} = \alpha_{s0} + \beta_{s0} \times \log(seed)$.
+
+
+\begin{equation} \label{eq:seed}
+\begin{aligned}
+\log(s) &\sim \mathrm{Normal}(\mu, \sigma) \\
+\mu &= \log(s_0) + rgr \times age \\
+\sigma &\sim \mathrm{Exponential}(1) \\
+\begin{bmatrix}
+\log(s_0) \\
+rgr
+\end{bmatrix} &\sim \mathrm{MVNormal}\left(\begin{bmatrix} \mu_{s0} \\ \mu_{rgr}
+\end{bmatrix}, \mathrm{diag}(\boldsymbol{\tau}) \space \mathbf{R} \space  \mathrm{diag}(\boldsymbol{\tau}) \right) \\
+\mu_{s0} &= \alpha_{s0} + \beta_{s0}\times\log(seed) \\
+\alpha_{s0} &\sim \mathrm{Normal}(0, 1) \\
+\beta_{s0} &\sim \mathrm{Normal}(0, 1) \\
+\mu_{rgr} &\sim \mathrm{Normal}(0.24, 0.1) \\
+\boldsymbol{\tau} &\sim \mathrm{Exponential}(1) \\
+\mathbf{R} &\sim \mathrm{LKJcorr}(2)
+\end{aligned}
+\end{equation}
+
+
+
+Here is the stan program for this model:
+
+```{cat, engine.opts = list(file = "model.stan", lang = "stan")}
+#| eval: true
+data{
+  int N; // number of observations
+  int J; // number of individuals
+  vector[N] l_size; // size observations
+  vector[N] age; // age of observations
+  array[N] int id; // index of individuals
+  vector[J] l_seed; // seed sizes
+  array[J] int id_seed; // id of individuals for seeds
+}
+parameters{
+  real<lower=0> sigma; // standard deviation of errors
+  real mu_rgr; // mean relative growth rate
+  array[J] vector[2] Mu; // array of vectors carrying l_size0 and rgr
+  vector<lower=0>[2] tau; // standard deviation of l_size0 and rgr
+  corr_matrix[2] R; // correlation matrix between rgr and l_size0 error
+  real alpha_s0; // average initial log size
+  real beta_s0; // slope of log(size0) on log(seed size)
+}
+model{
+  // priors
+  sigma ~ exponential(1);
+  mu_rgr ~ normal(0.24, 0.1);
+  alpha_s0 ~ normal(0, 1);
+  beta_s0 ~ normal(0, 1);
+  tau ~ exponential(1);
+  R ~ lkj_corr(2);
+  
+  array[J] vector[2] mu_s0_rgr;
+  for(i in 1:J){
+    mu_s0_rgr[i,1] = alpha_s0 + beta_s0 * l_seed[id_seed[i]];
+    mu_s0_rgr[i,2] = mu_rgr;
+  }
+  
+  
+  Mu ~ multi_normal(mu_s0_rgr, quad_form_diag(R, tau)); 
+  
+  // likelihood
+  // Define the expected value for each observation
+  vector[N] mu;
+  for(i in 1:N){
+    mu[i] = Mu[id[i], 1] + Mu[id[i], 2] * age[i];
+  }
+  l_size ~ normal(mu, sigma);
+}
+```
+
+Now I sorta need a short data set with just the seed size and id for each individual, and then the long data set of seedling size observations.
+
+```{r}
+short <- d %>% 
+  filter(!duplicated(paste0(tray, "_", block, "_", ind))) %>% 
+  select(seed_area, id)
+```
+
+Now compile and fit the model.
+
+```{r}
+#| eval: true
+# compile the model and get the data ready
+mod <- cmdstan_model(here("notebooks/model.stan"))
+
+dat <- list(
+  N = nrow(d),
+  J = length(unique(d$id)),
+  l_size = log(d$area),
+  age = d$age,
+  id = d$id,
+  # add the short data in
+  l_seed = log(short$seed_area),
+  id_seed = short$id
+)
+
+fit <- mod$sample(
+  data = dat,
+  chains = 4,
+  parallel_chains = 4,
+  show_messages = F,
+  show_exceptions = F
+)
+
+fit$diagnostic_summary()
+summ <- fit$summary()
+```
+
+It looks like, computationally it fit ok. Let's check the rhat and ess again.
+
+```{r}
+#| eval: true
+hist(summ$rhat)
+hist(summ$ess_bulk)
+hist(summ$ess_tail)
+```
+Still looking good. I should probably start evaluating model fit as well as computation. Let's add information about crosses first before doing that.
 
 
